@@ -14,6 +14,7 @@
  * limitations under the License.
  **/
 
+import Socket
 import Foundation
 
 // MARK: Redis
