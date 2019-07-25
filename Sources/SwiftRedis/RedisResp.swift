@@ -25,7 +25,7 @@ enum RedisRespStatus {
 class RedisResp {
     ///
     /// Socket used to talk with the server
-    private var socket: Socket?
+    public var socket: Socket?
 
     // Mark: Prebuilt constant UTF8 strings (these strings are all proper UTF-8 strings)
     private static let asterisk = RedisString("*").asData
@@ -45,6 +45,11 @@ class RedisResp {
         socket = try? Socket.create()
         try? socket?.connect(to: host, port: port)
     }
+
+    init(socket: Socket) {
+        self.socket = socket
+    }
+
 
     func issueCommand(_ stringArgs: [String], callback: (RedisResponse) -> Void) {
         guard let socket = socket else { return }
