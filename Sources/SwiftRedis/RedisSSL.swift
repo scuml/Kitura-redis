@@ -23,8 +23,8 @@ extension Redis {
     ///           clientAllowsSelfSignedCertificates: true
     ///       )
     /// - Parameter callback: callback function for on completion, NSError will be nil if successful.
-    public func connect(host: String, port: Int32, sslConfig: SSLService.Configuration? = nil, callback: (NSError?) -> Void) {
-        respHandle = RedisResp(host: host, port: port, sslConfig: sslConfig)
+    public func connect(host: String, port: Int32, sslConfig: SSLService.Configuration? = nil, sslSkipVerification: Bool = false, callback: (NSError?) -> Void) {
+        respHandle = RedisResp(host: host, port: port, sslConfig: sslConfig, sslSkipVerification: sslSkipVerification)
 
         if respHandle?.status == .notConnected {
             callback(createError("Failed to connect to Redis server", code: 2))
