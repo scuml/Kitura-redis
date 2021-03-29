@@ -36,7 +36,7 @@ extension Redis {
 
 extension RedisResp {
 
-    convenience init(host: String, port: Int32, sslConfig: SSLService.Configuration? = nil, sslSkipVerification: Bool: false) {
+    convenience init(host: String, port: Int32, sslConfig: SSLService.Configuration? = nil, sslSkipVerification: Bool = false) {
         self.init()
         socket = try? Socket.create()
         if let sslConfig = sslConfig{
