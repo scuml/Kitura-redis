@@ -204,7 +204,6 @@ public class Redis {
             callback(RedisResponse.Error("Empty command"))
             return
         }
-        print("ISSUE ", stringArgs)
         respHandle.issueCommand(stringArgs, callback: callback)
     }
 
