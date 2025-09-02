@@ -32,6 +32,15 @@ extension Redis {
             callback(nil)
         }
     }
+    public func connect(host: String, port: Int32, connectWithSSL: Bool = false, sslConfig: SSLService.Configuration? = nil, sslSkipVerification: Bool = false) async -> NSError? {
+        respHandle = RedisResp(host: host, port: port, connectWithSSL: connectWithSSL, sslConfig: sslConfig, sslSkipVerification: sslSkipVerification)
+
+        if respHandle?.status == .notConnected {
+            return createError("Failed to connect to Redis server", code: 2)
+        } else {
+            return nil
+        }
+    }
 }
 
 extension RedisResp {

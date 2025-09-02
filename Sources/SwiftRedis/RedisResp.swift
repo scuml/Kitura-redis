@@ -22,18 +22,286 @@ enum RedisRespStatus {
     case connected
 }
 
+actor SocketActor{
+    var socket: Socket?
+
+    init(){
+
+    }
+    init(_ socket: Socket){
+        self.socket = socket
+    }
+
+    func read() async -> RedisResponse{
+        let r = readAndParseResponse()
+        return r
+    }
+
+    func readNonBlocking() async -> RedisResponse?{
+        var buffer = Data()
+        var offset = 0
+        var response: RedisResponse = RedisResponse.Nil
+        do {
+            try socket?.setReadTimeout(value: 250)
+            (response, offset) = try parseByPrefix(&buffer, from: offset)
+            return response
+        } catch let error as Socket.Error {
+            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)")
+        } catch let error as RedisRespError {
+            // EOF errors are fine here.  Just mean that no data was received
+            if error.code == .EOF{
+                return nil
+            }
+            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description())")
+        } catch {
+            return RedisResponse.Error("Error reading from the Redis server. Unknown error")
+        }
+    }
+
+
+    func write(from: Data) async throws -> RedisResponse {
+        // writes a command to the socket
+        guard let socket = socket else { return RedisResponse.Error("Socket not initialized in SwiftRedis.") }
+
+        do {
+            try socket.write(from: from)
+            let resp = readAndParseResponse()
+            return resp
+
+        } catch let error as Socket.Error {
+            return RedisResponse.Error("Error sending command to Redis server. Error=\(error.description)")
+        } catch {
+            return RedisResponse.Error("Error sending command to Redis server. Unknown error")
+        }
+
+    }
+
+    private func readAndParseResponse() -> RedisResponse {
+        var buffer = Data()
+        var offset = 0
+        var response: RedisResponse = RedisResponse.Nil
+
+        do {
+            (response, offset) = try parseByPrefix(&buffer, from: offset)
+            return response
+        } catch let error as Socket.Error {
+            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)")
+        } catch let error as RedisRespError {
+            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description())")
+        } catch {
+            return RedisResponse.Error("Error reading from the Redis server. Unknown error")
+        }
+    }
+
+    private func parseByPrefix(_ buffer: inout Data, from: Int) throws -> (RedisResponse, Int) {
+        var response: RedisResponse
+
+        var offset = from
+
+        while offset+1 >= buffer.count {
+            let length = try socket?.read(into: &buffer )
+            if  length == 0 {
+                throw RedisRespError(code: .EOF)
+            }
+        }
+
+        switch (buffer[offset..<offset+1]){
+        case RedisResp.plus:
+            (response, offset) = try parseSimpleString(&buffer, offset: offset+1)
+        case RedisResp.colon:
+            (response, offset) = try parseInteger(&buffer, offset: offset+1)
+        case RedisResp.dollar:
+            (response, offset) = try parseBulkString(&buffer, offset: offset+1)
+        case RedisResp.asterisk:
+            (response, offset) = try parseArray(&buffer, offset: offset+1)
+        case RedisResp.minus:
+            (response, offset) = try parseError(&buffer, offset: offset+1)
+        default:
+            response = RedisResponse.Error("Unknown response type")
+        }
+        return (response, offset)
+    }
+
+    private func parseArray(_ buffer: inout Data, offset: Int) throws -> (RedisResponse, Int) {
+        var (arrayLength, newOffset) = try parseIntegerValue(&buffer, offset: offset)
+        var responses = [RedisResponse]()
+        var response: RedisResponse
+        if  arrayLength >= 0 {
+            for _ in 0 ..< Int(arrayLength) {
+                (response, newOffset) = try parseByPrefix(&buffer, from: newOffset)
+                responses.append(response)
+            }
+            return (RedisResponse.Array(responses), newOffset)
+        } else {
+            return (RedisResponse.Nil, newOffset)
+        }
+    }
+
+    private func parseBulkString(_ buffer: inout Data, offset: Int) throws -> (RedisResponse, Int) {
+        let (strLen64, newOffset) = try parseIntegerValue(&buffer, offset: offset)
+        if  strLen64 >= 0 {
+            let strLen = Int(strLen64)
+            let totalLength = newOffset+strLen+RedisResp.crLf.count
+            while  totalLength > buffer.count {
+                let length = try socket?.read(into: &buffer)
+                if  length == 0 {
+                    throw RedisRespError(code: .EOF)
+                }
+            }
+            let redisString = RedisString(buffer[newOffset..<newOffset+strLen])
+            return (RedisResponse.StringValue(redisString), totalLength)
+        } else {
+            return (RedisResponse.Nil, newOffset)
+        }
+    }
+
+    private func parseError(_ buffer:  inout Data, offset: Int) throws -> (RedisResponse, Int) {
+        let eos = try findCrlf(&buffer, from: offset)
+        let optStr = String(data: buffer[offset..<eos], encoding: String.Encoding.utf8)
+        let length = eos+RedisResp.crLf.count
+        guard  let str = optStr  else {
+            throw RedisRespError(code: .notUTF8)
+        }
+        return (RedisResponse.Error(str), length)
+    }
+
+    private func parseInteger(_ buffer: inout Data, offset: Int) throws -> (RedisResponse, Int) {
+        let (int, newOffset) = try parseIntegerValue(&buffer, offset: offset)
+        return (RedisResponse.IntegerValue(int), newOffset)
+    }
+
+    private func parseSimpleString(_ buffer: inout Data, offset: Int) throws -> (RedisResponse, Int) {
+        let eos = try findCrlf(&buffer, from: offset)
+        let optStr = String(data: buffer[offset..<eos], encoding: String.Encoding.utf8)
+        let length = eos+RedisResp.crLf.count
+        guard  let str = optStr  else {
+            throw RedisRespError(code: .notUTF8)
+        }
+        return (RedisResponse.Status(str), length)
+    }
+
+    // Mark: Parser helper functions
+
+    private func compare(_ buffer: inout Data, at offset: Int, with: Data) throws -> (Bool, Int) {
+        // use offset+1 instead of offset+with.count as with.count is always == 1
+        while offset+1 >= buffer.count {
+            let length = try socket?.read(into: &buffer)
+            if  length == 0 {
+                throw RedisRespError(code: .EOF)
+            }
+        }
+
+        if (buffer[offset..<offset+1] == with){
+            return (true, offset+1)
+        } else {
+            return (false, offset)
+        }
+    }
+
+    private func find(_ buffer: inout Data, from: Int, data: Data) throws -> Int {
+        let offset = from
+        while true {
+            let range = buffer.range(of: data, options: [], in: offset..<buffer.count)
+            if range != nil {
+                return range!.lowerBound
+
+            } else {
+                let length = try socket?.read(into: &buffer)
+                if  length == 0 {
+                    throw RedisRespError(code: .EOF)
+                }
+            }
+        }
+    }
+    private func findCrlf(_ buffer: inout Data, from: Int) throws -> Int {
+        /* 5X faster than using find() above.  range() is expensive */
+        var i = from
+        while true {
+            while i < buffer.count - 1 {
+                if buffer[i+1] == 10{
+                    if buffer[i] == 13{
+                        return i
+                    } else {
+                        i+=2
+                    }
+                } else {
+                    i+=1
+                }
+            }
+
+            let length = try socket?.read(into: &buffer)
+            if  length == 0 {
+                throw RedisRespError(code: .EOF)
+            }
+        }
+    }
+
+    private func parseIntegerValue(_ buffer: inout Data, offset: Int) throws -> (Int64, Int) {
+        let eos = try findCrlf(&buffer, from: offset)
+        let optStr = String(data: buffer[offset..<eos], encoding: String.Encoding.utf8)
+        let length = eos+RedisResp.crLf.count
+        guard  let str = optStr  else {
+            throw RedisRespError(code: .notUTF8)
+        }
+        let optInt = Int64(str)
+        guard  let int = optInt  else {
+            throw RedisRespError(code: .notInteger)
+        }
+        return (int, length)
+    }
+
+}
+let redisHexStringPattern = "^\\\\u?\\{?(?:00)?(?<digit>[0-9a-fA-F]+)\\}?$"
+let redisHexStringRegex = try! NSRegularExpression(pattern: redisHexStringPattern)
+
+extension Data {
+
+    func toUTF8OrFallbackToHexString() -> String{
+        if let redis_string = String(data: self, encoding: String.Encoding.utf8) ?? nil{
+            return redis_string
+        }else{
+            return self.toRedisHexString()
+        }
+    }
+    func toRedisHexString() -> String{
+        var output = ""
+        guard let asciiString = String(data:self, encoding:String.Encoding.ascii) else { return "" }
+        for char in asciiString{
+            // ensure quotes aren't escaped
+            if char == "'" || char == "\""{
+                output.append(char)
+                continue
+            }
+
+            guard let ascii = char.unicodeScalars.first?.escaped(asASCII: true) else { continue }
+
+            if let range = redisHexStringRegex.firstMatch(in: ascii, range: NSRange(location: 0, length: ascii.count)){
+                var asciiDigit = (ascii as NSString).substring(with: range.range(at: 1))
+                // left pad 0
+                if asciiDigit.count == 1{
+                    asciiDigit = "0\(asciiDigit)"
+                }
+                output.append("\\x" + asciiDigit)
+            }else{
+                output.append(ascii)
+            }
+        }
+        return output
+    }
+}
 public class RedisResp {
     ///
     /// Socket used to talk with the server
     public var socket: Socket?
+    var socketActor: SocketActor?
 
     // Mark: Prebuilt constant UTF8 strings (these strings are all proper UTF-8 strings)
-    private static let asterisk = RedisString("*").asData
-    private static let colon = RedisString(":").asData
-    private static let crLf = RedisString("\r\n").asData
-    private static let dollar = RedisString("$").asData
-    private static let minus = RedisString("-").asData
-    private static let plus = RedisString("+").asData
+    static let asterisk = RedisString("*").asData
+    static let colon = RedisString(":").asData
+    static let crLf = RedisString("\r\n").asData
+    static let dollar = RedisString("$").asData
+    static let minus = RedisString("-").asData
+    static let plus = RedisString("+").asData
 
     /// State of connection.
     /// Does not reflect state changes in the event of a disconnect.
@@ -46,12 +314,18 @@ public class RedisResp {
     }
     init(host: String, port: Int32) {
         socket = try? Socket.create()
+        if let socket = socket {
+            socketActor = SocketActor(socket)
+        }
         self.connect(host: host, port: port)
     }
 
     func connect(host: String, port: Int32) {
         do{
             try socket?.connect(to: host, port: port)
+            if let socket = socket {
+                socketActor = SocketActor(socket)
+            }
         }catch{
             print(error)
         }
@@ -59,6 +333,30 @@ public class RedisResp {
 
     func disconnect(){
         socket?.close()
+    }
+
+    @available(macOS 10.15.0, *)
+    func issueCommand(_ stringArgs: [String]) async -> RedisResponse{
+        guard let socketActor = socketActor else { return RedisResponse.Error("SocketActor not initialized in SwiftRedis.") }
+
+        var buffer = Data()
+        buffer.append(RedisResp.asterisk)
+        add(stringArgs.count, to: &buffer)
+        buffer.append(RedisResp.crLf)
+
+        for arg in stringArgs {
+            addAsBulkString(RedisString(arg).asData, to: &buffer)
+        }
+
+        do {
+            let write = try await socketActor.write(from: buffer)
+            return write
+
+        } catch let error as Socket.Error {
+            return RedisResponse.Error("Error sending command to Redis server. Error=\(error.description)")
+        } catch {
+            return RedisResponse.Error("Error sending command to Redis server. Unknown error")
+        }
     }
 
     func issueCommand(_ stringArgs: [String], callback: (RedisResponse) -> Void) {
@@ -85,6 +383,7 @@ public class RedisResp {
     }
 
     func issueCommand(_ stringArgs: [RedisString], callback: (RedisResponse) -> Void) {
+
         guard let socket = socket else { return }
 
         var buffer = Data()
@@ -107,7 +406,51 @@ public class RedisResp {
         }
     }
 
+    func issueCommand(_ stringArgs: [RedisString]) async -> RedisResponse {
+        guard let socket = socket else { return RedisResponse.Error("Redis socket not found") }
+
+        var buffer = Data()
+        buffer.append(RedisResp.asterisk)
+        add(stringArgs.count, to: &buffer)
+        buffer.append(RedisResp.crLf)
+
+        for arg in stringArgs {
+            addAsBulkString(arg.asData, to: &buffer)
+        }
+
+        do {
+            try socket.write(from: buffer)
+
+            return readAndParseResponse()
+        } catch let error as Socket.Error {
+            return (RedisResponse.Error("Error sending command to Redis server. Error=\(error.description)"))
+        } catch {
+            return (RedisResponse.Error("Error sending command to Redis server. Unknown error."))
+        }
+    }
+
+
     // Mark: Parsing Functions
+
+    // callback-less method
+    public func readAndParseResponse() -> RedisResponse {
+        var buffer = Data()
+        var offset = 0
+        var response: RedisResponse = RedisResponse.Nil
+
+        do {
+            (response, offset) = try parseByPrefix(&buffer, from: offset)
+            print("read resp1", response, offset)
+
+            return response
+        } catch let error as Socket.Error {
+            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)")
+        } catch let error as RedisRespError {
+            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description())")
+        } catch {
+            return RedisResponse.Error("Error reading from the Redis server. Unknown error")
+        }
+    }
 
     private func readAndParseResponse(callback: (RedisResponse) -> Void) {
         var buffer = Data()
@@ -116,6 +459,8 @@ public class RedisResp {
 
         do {
             (response, offset) = try parseByPrefix(&buffer, from: offset)
+            print("read resp2", response, offset)
+
             callback(response)
         } catch let error as Socket.Error {
             callback(RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)"))
@@ -233,7 +578,7 @@ public class RedisResp {
     }
 
     private func find(_ buffer: inout Data, from: Int, data: Data) throws -> Int {
-        var offset = from
+        let offset = from
         while true {
             let range = buffer.range(of: data, options: [], in: offset..<buffer.count)
             if range != nil {
@@ -246,7 +591,6 @@ public class RedisResp {
                 }
             }
         }
-        return offset
     }
     private func findCrlf(_ buffer: inout Data, from: Int) throws -> Int {
         /* 5X faster than using find() above.  range() is expensive */
@@ -269,7 +613,6 @@ public class RedisResp {
                 throw RedisRespError(code: .EOF)
             }
         }
-        return from
     }
 
     private func parseIntegerValue(_ buffer: inout Data, offset: Int) throws -> (Int64, Int) {

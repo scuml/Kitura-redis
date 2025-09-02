@@ -351,6 +351,17 @@ extension Redis {
             self.redisIntegerResponseHandler(response, callback: callback)
         }
     }
+    public func zremArrayOfMembers(_ key: String, members: [String]) async -> (Int?, NSError?) {
+        var command = ["ZREM"]
+        command.append(key)
+        for element in members {
+            command.append(element)
+        }
+        let response = await issueCommandInArray(command)
+        return self.redisIntegerResponseHandler(response)
+    }
+
+
 
     /// Remove all members in a sorted set between the given lexicographical range.
     ///
@@ -413,6 +424,18 @@ extension Redis {
             issueCommand("ZREVRANGE", key, String(start), String(stop), "WITHSCORES") { (response: RedisResponse) in
                 self.redisStringArrayResponseHandler(response, callback: callback)
             }
+        }
+    }
+
+    @available(macOS 10.15.0, *)
+    public func zrevrange(_ key: String, start: Int, stop: Int, withscores: Bool = false) async -> ([RedisString?]?, NSError?) {
+        if !withscores {
+            let response = await issueCommand("ZREVRANGE", key, String(start), String(stop))
+            return self.redisStringArrayResponseHandler(response)
+
+        } else {
+            let response = await issueCommand("ZREVRANGE", key, String(start), String(stop), "WITHSCORES")
+            return self.redisStringArrayResponseHandler(response)
         }
     }
 

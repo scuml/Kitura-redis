@@ -265,6 +265,15 @@ extension Redis {
             self.redisIntegerResponseHandler(response, callback: callback)
         }
     }
+    public func del(_ keys: String...) async -> (Int?, NSError?){
+
+        var command = ["DEL"]
+        for key in keys {
+            command.append(key)
+        }
+        let response = await issueCommandInArray(command)
+        return self.redisIntegerResponseHandler(response)
+    }
     
     /// Removes the specified keys. A key is ignored if it does not exist
     ///
@@ -304,10 +313,16 @@ extension Redis {
     /// - Parameter inTime: The expiration period as a number of milliseconds.
     /// - Parameter callback: The callback function, the Bool will contain true if the timeout
     ///                      was set. NSError will be non-nil if an error occurred.
+    @available(*, renamed: "expire()")
     public func expire(_ key: String, inTime: TimeInterval, callback: (Bool, NSError?) -> Void) {
         issueCommand("PEXPIRE", key, String(Int(inTime * 1000.0))) {(response: RedisResponse) in
             self.redisBoolResponseHandler(response, callback: callback)
         }
+    }
+    @available(macOS 10.15.0, *)
+    public func expire(_ key: String, inTime: TimeInterval) async -> (Bool, NSError?){
+        let response = await issueCommand("PEXPIRE", key, String(Int(inTime * 1000.0)))
+        return self.redisBoolResponseHandler(response)
     }
     
     /// Set a timeout on a key. After the timeout has expired, the key will automatically be deleted.
@@ -317,10 +332,16 @@ extension Redis {
     /// - Parameter atDate: The key's expiration specified as a timestamp.
     /// - Parameter callback: The callback function, the Bool will contain true if the timeout
     ///                      was set. NSError will be non-nil if an error occurred.
+    @available(*, renamed: "expire()")
     public func expire(_ key: String, atDate: NSDate, callback: (Bool, NSError?) -> Void) {
         issueCommand("PEXPIREAT", key, String(Int(atDate.timeIntervalSince1970 * 1000.0))) {(response: RedisResponse) in
             self.redisBoolResponseHandler(response, callback: callback)
         }
+    }
+    @available(macOS 10.15.0, *)
+    public func expire(_ key: String, atDate: NSDate) async -> (Bool, NSError?){
+        let response = await issueCommand("PEXPIREAT", key, String(Int(atDate.timeIntervalSince1970 * 1000.0)))
+        return self.redisBoolResponseHandler(response)
     }
     
     /// Returns all keys matching `pattern`.
@@ -345,6 +366,11 @@ extension Redis {
         issueCommand("GET", key) {(response: RedisResponse) in
             self.redisStringResponseHandler(response, callback: callback)
         }
+    }
+    @available(macOS 10.15.0, *)
+    public func get(_ key: String) async -> (RedisString?, NSError?) {
+        let response = await issueCommand("GET", key)
+        return self.redisStringResponseHandler(response)
     }
     
     /// Returns the bit at an offset in the string value stored at the key.
@@ -530,10 +556,16 @@ extension Redis {
     /// - Parameter key: The key.
     /// - Parameter callback: The callback function, the Bool will contain true if the timeout
     ///                      was removed. NSError will be non-nil if an error occurred.
+    @available(*, renamed: "persist()")
     public func persist(_ key: String, callback: (Bool, NSError?) -> Void) {
         issueCommand("PERSIST", key) {(response: RedisResponse) in
             self.redisBoolResponseHandler(response, callback: callback)
         }
+    }
+    @available(macOS 10.15.0, *)
+    public func persist(_ key: String) async -> (Bool, NSError?) {
+        let response = await issueCommand("PERSIST", key)
+        return self.redisBoolResponseHandler(response)
     }
     
     /// Return a random key from the currently selected database.
@@ -567,6 +599,15 @@ extension Redis {
             }
         }
     }
+    public func rename(_ key: String, newKey: String, exists: Bool=true) async -> (Bool, NSError?){
+        if  exists {
+            let response = await issueCommand("RENAME", key, newKey)
+            return self.redisOkResponseHandler(response, nilOk: false)
+        } else {
+            let response = await issueCommand("RENAMENX", key, newKey)
+            return self.redisBoolResponseHandler(response)
+        }
+    }
 
     /// Iterates the set of keys in the currently selected Redis database.
     ///
@@ -579,6 +620,7 @@ extension Redis {
     ///                        iterated.
     /// - parameter res: The results of the scan.
     /// - parameter err: The error, if one occured.
+    @available(*, renamed: "scan()")
     public func scan(cursor: Int, match: String?=nil, count: Int?=nil, callback: (_ newCursor: RedisString?, _ res: [RedisString?]?, _ err: NSError?) -> Void) {
         if let match = match, let count = count {
             issueCommand("SCAN", String(cursor), "MATCH", match, "COUNT", String(count)) {(res: RedisResponse) in
@@ -596,6 +638,24 @@ extension Redis {
             issueCommand("SCAN", String(cursor)) {(res: RedisResponse) in
                 redisScanResponseHandler(res, callback: callback)
             }
+        }
+    }
+
+    @available(macOS 10.15.0, *)
+    public func scan(cursor: Int, match: String?=nil, count: Int?=nil) async -> (RedisString?, [RedisString?]?, NSError?) {
+        // returns, cursor, keys, and error
+        if let match = match, let count = count {
+            let res = await issueCommand("SCAN", String(cursor), "MATCH", match, "COUNT", String(count))
+            return redisScanResponseHandler(res)
+        } else if let match = match {
+            let res = await issueCommand("SCAN", String(cursor), "MATCH", match)
+            return redisScanResponseHandler(res)
+        } else if let count = count {
+            let res = await issueCommand("SCAN", String(cursor), "COUNT", String(count))
+            return redisScanResponseHandler(res)
+        } else {
+            let res = await issueCommand("SCAN", String(cursor))
+            return redisScanResponseHandler(res)
         }
     }
 
@@ -799,6 +859,7 @@ extension Redis {
     ///   - -2 if the key does not exist
     ///   - -1 if the key exists but has no associated expiration period.
     ///   NSError will be non-nil if an error occurred.
+    @available(*, renamed: "ttl()")
     public func ttl(_ key: String, callback: (TimeInterval?, NSError?) -> Void) {
         issueCommand("PTTL", key) {(response: RedisResponse) in
             switch(response) {
@@ -815,6 +876,22 @@ extension Redis {
             }
         }
     }
+    @available(macOS 10.15.0, *)
+    public func ttl(_ key: String) async -> (TimeInterval?, NSError?) {
+        let response = await issueCommand("PTTL", key)
+        switch(response) {
+        case .IntegerValue(let num):
+            if  num >= 0 {
+                return (TimeInterval(Double(num)/1000.0), nil)
+            } else {
+                return (TimeInterval(num), nil)
+            }
+        case .Error(let error):
+            return (nil, _: self.createError("Error: \(error)", code: 1))
+        default:
+            return (nil, _: self.createUnexpectedResponseError(response))
+        }
+    }
     
     /// Returns the string representation of the type of the value stored at 
     /// `key`. The different types that can be returned are: string, list, set,
@@ -824,9 +901,15 @@ extension Redis {
     /// - parameter callback: The callback function.
     /// - parameter res: The type of key, or none when key does not exist.
     /// - parameter err: The error, if one occurred.
+    @available(*, renamed: "type()")
     public func type(key: String, callback: (_ res: String?, _ err: NSError?) -> Void) {
         issueCommand("TYPE", key) { (res) in
             redisSimpleStringResponseHandler(response: res, callback: callback)
         }
+    }
+    @available(macOS 10.15.0, *)
+    public func type(key: String) async -> (res: String?, err: NSError?) {
+        let res = await issueCommand("TYPE", key)
+        return redisSimpleStringResponseHandler(response: res)
     }
 }

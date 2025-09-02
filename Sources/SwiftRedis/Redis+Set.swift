@@ -229,6 +229,11 @@ extension Redis {
             self.redisStringArrayResponseHandler(response, callback: callback)
         }
     }
+    @available(macOS 10.15.0, *)
+    public func smembers(_ key: String) async -> ([RedisString?]?, NSError?) {
+        let response = await issueCommand("SMEMBERS", key)
+        return self.redisStringArrayResponseHandler(response)
+    }
 
     /// Get all the members in a set
     ///

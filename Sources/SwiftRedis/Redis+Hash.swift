@@ -103,6 +103,34 @@ extension Redis {
             callback(values, _: error)
         }
     }
+    @available(macOS 10.15.0, *)
+    public func hgetall(_ key: String) async -> ([String: RedisString], NSError?) {
+        let response = await issueCommand("HGETALL", key)
+        var values = [String: RedisString]()
+        var error: NSError? = nil
+
+        switch(response) {
+        case .Array(let responses):
+            for idx in stride(from: 0, to: responses.count-1, by: 2) {
+                switch(responses[idx]) {
+                case .StringValue(let field):
+                    switch(responses[idx+1]) {
+                    case .StringValue(let value):
+                        values[field.asString] = value
+                    default:
+                        error = self.createUnexpectedResponseError(response)
+                    }
+                default:
+                    error = self.createUnexpectedResponseError(response)
+                }
+            }
+        case .Error(let err):
+            error = self.createError("Error: \(err)", code: 1)
+        default:
+            error = self.createUnexpectedResponseError(response)
+        }
+        return (values, error)
+    }
 
     /// Increments the number stored in a field in the hash stored at a key by a value
     ///

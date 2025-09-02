@@ -64,6 +64,11 @@ public class RedisString: CustomStringConvertible {
         return String(data: data, encoding: String.Encoding.utf8)!
     }
 
+    /// - Returns: The contents of the `RedisString` object as a String.
+    public var asStringSafe: String? {
+        return String(data: data, encoding: String.Encoding.utf8)
+    }
+    
     /// Get the contents of the `RedisString` object in the form of an Int
     ///
     /// - Returns: The contents of the `RedisString` object as an Int.

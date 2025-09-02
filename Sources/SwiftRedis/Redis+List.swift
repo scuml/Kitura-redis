@@ -245,6 +245,11 @@ extension Redis {
             self.redisStringArrayResponseHandler(response, callback: callback)
         }
     }
+    @available(macOS 10.15.0, *)
+    public func lrange(_ key: String, start: Int, end: Int) async -> ([RedisString?]?, NSError?) {
+        let response = await issueCommand("LRANGE", key, String(start), String(end))
+        return self.redisStringArrayResponseHandler(response)
+    }
 
     /// Remove a number of elements that match the supplied value from the list
     ///

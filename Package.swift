@@ -1,4 +1,4 @@
-// swift-tools-version:5.0
+// swift-tools-version:5.5
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 /**
@@ -21,24 +21,28 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftRedis",
+    platforms: [
+        .macOS(.v10_15)
+    ],
     products: [
         // Products define the executables and libraries produced by a package, and make them visible to other packages.
         .library(
             name: "SwiftRedis",
             targets: ["SwiftRedis"]),
+
         ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
         // .package(url: /* package url */, from: "1.0.0"),
-        .package(url: "https://github.com/Kitura/BlueSocket.git", from: "1.0.200"),
-        .package(url: "https://github.com/Kitura/BlueSSLService.git", from: "1.0.200")
+        .package(url: "https://github.com/Kitura/BlueSocket.git", from: "2.0.2"),
+        .package(url: "https://github.com/Kitura/BlueSSLService.git", from: "2.0.1")
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target defines a module or a test suite.
         // Targets can depend on other targets in this package, and on products in packages which this package depends on.
         .target(
             name: "SwiftRedis",
-            dependencies: ["Socket", "SSLService"]),
+            dependencies: [.product(name: "Socket", package:"BlueSocket"), .product(name: "SSLService", package: "BlueSSLService")]),
         .testTarget(
             name: "SwiftRedisTests",
             dependencies: ["SwiftRedis"]),
