@@ -37,24 +37,21 @@ actor SocketActor{
         return r
     }
 
-    func readNonBlocking() async -> RedisResponse?{
-        var buffer = Data()
-        var offset = 0
-        var response: RedisResponse = RedisResponse.Nil
+    func readNonBlocking() async -> [RedisResponse]{
+        
         do {
             try socket?.setReadTimeout(value: 250)
-            (response, offset) = try parseByPrefix(&buffer, from: offset)
-            return response
+            return try parseAllInBuffer()
         } catch let error as Socket.Error {
-            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)")
+            return [RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)")]
         } catch let error as RedisRespError {
             // EOF errors are fine here.  Just mean that no data was received
             if error.code == .EOF{
-                return nil
+                return []
             }
-            return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description())")
+            return [RedisResponse.Error("Error reading from the Redis server. Error=\(error.description())")]
         } catch {
-            return RedisResponse.Error("Error reading from the Redis server. Unknown error")
+            return [RedisResponse.Error("Error reading from the Redis server. Unknown error")]
         }
     }
 
@@ -93,6 +90,40 @@ actor SocketActor{
         }
     }
 
+    private func parseAllInBuffer() throws -> [RedisResponse] {
+        // Read all responses in the buffer.
+        var responses: [RedisResponse] = []
+        var response: RedisResponse
+
+        var buffer = Data()
+        var offset = 0
+        
+        let length = try socket?.read(into: &buffer )
+        if  length == 0 {
+            throw RedisRespError(code: .EOF)
+        }
+
+        print("originial offset", offset, buffer.count)
+        while(offset < buffer.count){
+            switch buffer[offset..<offset+1]{  //slice the first byte but return as Data
+                case RedisResp.plus:
+                    (response, offset) = try parseSimpleString(&buffer, offset: offset+1)
+                case RedisResp.colon:
+                    (response, offset) = try parseInteger(&buffer, offset: offset+1)
+                case RedisResp.dollar:
+                    (response, offset) = try parseBulkString(&buffer, offset: offset+1)
+                case RedisResp.asterisk:
+                    (response, offset) = try parseArray(&buffer, offset: offset+1)
+                case RedisResp.minus:
+                    (response, offset) = try parseError(&buffer, offset: offset+1)
+                default:
+                    response = RedisResponse.Error("Unknown response type")
+                }
+            responses.append(response)
+        }
+        return (responses)
+    }
+    
     private func parseByPrefix(_ buffer: inout Data, from: Int) throws -> (RedisResponse, Int) {
         var response: RedisResponse
 
@@ -105,6 +136,7 @@ actor SocketActor{
             }
         }
 
+        print("originial offset", offset, buffer.count)
         switch (buffer[offset..<offset+1]){
         case RedisResp.plus:
             (response, offset) = try parseSimpleString(&buffer, offset: offset+1)
@@ -119,6 +151,7 @@ actor SocketActor{
         default:
             response = RedisResponse.Error("Unknown response type")
         }
+        print(response, "new offset", offset)
         return (response, offset)
     }
 
@@ -440,8 +473,6 @@ public class RedisResp {
 
         do {
             (response, offset) = try parseByPrefix(&buffer, from: offset)
-            print("read resp1", response, offset)
-
             return response
         } catch let error as Socket.Error {
             return RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)")
@@ -459,8 +490,6 @@ public class RedisResp {
 
         do {
             (response, offset) = try parseByPrefix(&buffer, from: offset)
-            print("read resp2", response, offset)
-
             callback(response)
         } catch let error as Socket.Error {
             callback(RedisResponse.Error("Error reading from the Redis server. Error=\(error.description)"))

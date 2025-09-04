@@ -181,41 +181,42 @@ public class RedisSubscription: Redis{
         while await safevars.getIsListening() {
             
             do{
-                guard let response = try await self.respHandle?.socketActor?.readNonBlocking() else {
-                    try? await Task.sleep(nanoseconds: 100_000_0000) // 100ms
+                guard let responses = try await self.respHandle?.socketActor?.readNonBlocking() else {
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
                     continue
                 }
-                
-                
-                // Early exit if not an array
-                guard let responseArray = response.asArray,
-                      !responseArray.isEmpty,
-                      let responseType = responseArray[0].asString?.asString else {
-                    print("unknown message response", response)
-                    continue
-                }
-                
-                // Process based on message type
-                switch responseType {
-                case "message" where responseArray.count == 3:
-                    if let channel = responseArray[1].asString?.asString,
-                       let message = responseArray[2].asString?.asString {
-                        delegate?.onMessage(channel, message)
-                    } else {
-                        print("malformed message response", response)
+                for response in responses{
+                    
+                    // Early exit if not an array
+                    guard let responseArray = response.asArray,
+                          !responseArray.isEmpty,
+                          let responseType = responseArray[0].asString?.asString else {
+                        print("unknown message response", response)
+                        continue
                     }
                     
-                case "pmessage" where responseArray.count == 4:
-                    if let pattern = responseArray[1].asString?.asString,
-                       let channel = responseArray[2].asString?.asString,
-                       let message = responseArray[3].asString?.asStringSafe {
-                        delegate?.onMessage(pattern, channel, message)
-                    } else {
-                        print("malformed pmessage response", response)
+                    // Process based on message type
+                    switch responseType {
+                    case "message" where responseArray.count == 3:
+                        if let channel = responseArray[1].asString?.asString,
+                           let message = responseArray[2].asString?.asString {
+                            delegate?.onMessage(channel, message)
+                        } else {
+                            print("malformed message response", response)
+                        }
+                        
+                    case "pmessage" where responseArray.count == 4:
+                        if let pattern = responseArray[1].asString?.asString,
+                           let channel = responseArray[2].asString?.asString,
+                           let message = responseArray[3].asString?.asStringSafe {
+                            delegate?.onMessage(pattern, channel, message)
+                        } else {
+                            print("malformed pmessage response", response)
+                        }
+                        
+                    default:
+                        print("unknown message type: \(responseType), array count: \(responseArray.count)")
                     }
-                    
-                default:
-                    print("unknown message type: \(responseType), array count: \(responseArray.count)")
                 }
             }catch {
                 print("Error reading: \(error)")
